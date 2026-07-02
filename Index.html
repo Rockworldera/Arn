@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Long Distance Photobooth 📸</title>
+    <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+    <style>
+        :root {
+            --bg-color: #121212;
+            --panel-color: #1e1e1e;
+            --accent-color: #3a86ff; /* Binago sa Blue accent */
+            --text-color: #ffffff;
+            --frame-color: #a8ded9; /* Pastel Blue/Cyan frame color */
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+        }
+
+        h1 { margin-bottom: 5px; font-weight: 600; }
+
+        .setup-container {
+            background: var(--panel-color);
+            padding: 15px;
+            border-radius: 12px;
+            margin-bottom: 20px;
+            text-align: center;
+            width: 100%;
+            max-width: 450px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+        }
+
+        .id-display {
+            font-size: 1.1rem;
+            font-weight: bold;
+            color: var(--accent-color);
+            background: rgba(58, 134, 255, 0.1);
+            padding: 6px;
+            border-radius: 6px;
+            margin: 5px 0;
+            user-select: all;
+        }
+
+        input, button {
+            padding: 10px 15px;
+            border-radius: 8px;
+            border: none;
+            font-size: 1rem;
+            margin: 5px;
+        }
+
+        input { background: #333; color: #fff; width: 55%; }
+        button { background: var(--accent-color); color: white; cursor: pointer; font-weight: bold; }
+        button:disabled { background: #555; cursor: not-allowed; }
+
+        .workspace {
+            display: flex;
+            gap: 30px;
+            max-width: 1000px;
+            width: 100%;
+            justify-content: center;
+            align-items: flex-start;
+            flex-wrap: wrap;
+        }
+
+        .booth-container {
+            position: relative;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            flex: 1;
+            min-width: 320px;
+            background: var(--panel-color);
+            padding: 15px;
+            border-radius: 16px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+        }
+
+        video {
+            width: 100%;
+            aspect-ratio: 4/3;
+            object-fit: cover;
+            border-radius: 8px;
+            background: #000;
+            transform: scaleX(-1);
+        }
+
+        #countdown {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 7rem;
+            font-weight: bold;
+            color: #fff;
+            text-shadow: 0 0 20px var(--accent-color);
+            pointer-events: none;
+            display: none;
+            z-index: 10;
+        }
+
+        .strip-preview-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        /* LIVE PREVIEW NG BLUE STRIP */
+        .film-strip {
+            background-color: var(--frame-color);
+            padding: 15px;
+            width: 220px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            box-shadow: 0 8px 25px rgba(0,0,0,0.4);
+            border-radius: 4px;
+        }
+
+        .strip-slot {
+            width: 100%;
+            aspect-ratio: 8/3;
+            background: #333;
+            border-radius: 2px;
+            overflow: hidden;
+            display: flex;
+        }
+
+        .strip-slot canvas {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        #snap-btn {
+            margin-top: 20px;
+            padding: 15px 40px;
+            font-size: 1.2rem;
+            border-radius: 50px;
+            width: 100%;
+            max-width: 300px;
+            box-shadow: 0 4px 15px rgba(58, 134, 255, 0.4);
+        }
+
+        #master-canvas { display: none; }
+    </style>
+</head>
+<body>
+
+    <h1>Long Distance Photobooth 📸</h1>
+    
+    <div class="setup-container">
+        <div id="my-id-section">Generating your Photobooth ID...</div>
+        <div style="margin-top: 10px;">
+            <input type="text" id="remote-id-input" placeholder="Enter partner's ID...">
+            <button id="connect-btn">Connect Partner</button>
+        </div>
+    </div>
+
+    <div class="workspace">
+        <div class="booth-container">
+            <video id="local-video" autoplay playsinline muted></video>
+            <video id="remote-video" autoplay playsinline></video>
+            <div id="countdown">3</div>
+        </div>
+
+        <div class="strip-preview-container">
+            <div class="film-strip" id="film-strip-element">
+                <div class="strip-slot"><canvas id="slot-0"></canvas></div>
+                <div class="strip-slot"><canvas id="slot-1"></canvas></div>
+                <div class="strip-slot"><canvas id="slot-2"></canvas></div>
+                <div class="strip-slot"><canvas id="slot-3"></canvas></div>
+            </div>
+            <button id="snap-btn" disabled>Start 4-Shot Capture! ⚡</button>
+        </div>
+    </div>
+
+    <canvas id="master-canvas"></canvas>
+
+    <script>
+        let localStream, peer, currentCall;
+        let shotsTaken = 0;
+        const totalShots = 4;
+        const capturedFrames = [];
+
+        const localVideo = document.getElementById('local-video');
+        const remoteVideo = document.getElementById('remote-video');
+        const connectBtn = document.getElementById('connect-btn');
+        const remoteIdInput = document.getElementById('remote-id-input');
+        const snapBtn = document.getElementById('snap-btn');
+        const countdownEl = document.getElementById('countdown');
+        const masterCanvas = document.getElementById('master-canvas');
+
+        navigator.mediaDevices.getUserMedia({ video: true, audio: true })
+            .then(stream => {
+                localStream = stream;
+                localVideo.srcObject = stream;
+                initializePeer();
+            })
+            .catch(err => alert("Camera access is needed!"));
+
+        function initializePeer() {
+            peer = new Peer();
+            peer.on('open', (id) => {
+                document.getElementById('my-id-section').innerHTML = `
+                    Your Room ID: <span class="id-display">${id}</span>
+                `;
+            });
+            peer.on('call', (call) => {
+                currentCall = call;
+                call.answer(localStream);
+                handleStream(call);
+            });
+        }
+
+        connectBtn.addEventListener('click', () => {
+            const remoteId = remoteIdInput.value.trim();
+            if (!remoteId) return alert("Enter partner's ID!");
+            currentCall = peer.call(remoteId, localStream);
+            handleStream(currentCall);
+        });
+
+        function handleStream(call) {
+            call.on('stream', (remoteStream) => {
+                remoteVideo.srcObject = remoteStream;
+                snapBtn.disabled = false;
+            });
+        }
+
+        snapBtn.addEventListener('click', () => {
+            shotsTaken = 0;
+            capturedFrames.length = 0; 
+            snapBtn.disabled = true;
+            clearSlots();
+            runPhotoboothSequence();
+        });
+
+        function runPhotoboothSequence() {
+            if (shotsTaken >= totalShots) {
+                setTimeout(compileAndDownloadStrip, 800);
+                snapBtn.disabled = false;
+                return;
+            }
+
+            let count = 3;
+            countdownEl.style.display = 'block';
+            countdownEl.innerText = count;
+
+            const interval = setInterval(() => {
+                count--;
+                if (count > 0) {
+                    countdownEl.innerText = count;
+                } else {
+                    clearInterval(interval);
+                    countdownEl.style.display = 'none';
+                    captureSingleFrame(shotsTaken);
+                    shotsTaken++;
+                    setTimeout(runPhotoboothSequence, 1500); 
+                }
+            }, 1000);
+        }
+
+        function captureSingleFrame(index) {
+            const slotCanvas = document.getElementById(`slot-${index}`);
+            const ctx = slotCanvas.getContext('2d');
+            
+            const w = localVideo.videoWidth || 640;
+            const h = localVideo.videoHeight || 480;
+            
+            slotCanvas.width = w * 2;
+            slotCanvas.height = h;
+
+            ctx.translate(w, 0);
+            ctx.scale(-1, 1);
+            ctx.drawImage(localVideo, 0, 0, w, h);
+            ctx.setTransform(1, 0, 0, 1, 0, 0);
+
+            ctx.translate(w * 2, 0);
+            ctx.scale(-1, 1);
+            ctx.drawImage(remoteVideo, 0, 0, w, h);
+            ctx.setTransform(1, 0, 0, 1, 0, 0);
+
+            capturedFrames.push(slotCanvas.toDataURL('image/png'));
+        }
+
+        function clearSlots() {
+            for(let i=0; i<4; i++) {
+                const ctx = document.getElementById(`slot-${i}`).getContext('2d');
+                ctx.clearRect(0, 0, 1000, 1000);
+            }
+        }
+
+        function compileAndDownloadStrip() {
+            const mCtx = masterCanvas.getContext('2d');
+            
+            const photoW = 640 * 2;
+            const photoH = 480;
+            const padding = 30;
+            const gap = 20;
+
+            masterCanvas.width = photoW + (padding * 2);
+            masterCanvas.height = (photoH * 4) + (gap * 3) + (padding * 2);
+
+            // GINAWANG BLUE ANG IPAPASANG IMAGE BACKGROUND FRAME
+            mCtx.fillStyle = "#a8ded9"; 
+            mCtx.fillRect(0, 0, masterCanvas.width, masterCanvas.height);
+
+            let loadedCount = 0;
+            capturedFrames.forEach((src, i) => {
+                const img = new Image();
+                img.src = src;
+                img.onload = () => {
+                    mCtx.drawImage(img, padding, padding + (i * (photoH + gap)), photoW, photoH);
+                    loadedCount++;
+                    
+                    if (loadedCount === totalShots) {
+                        const finalImage = masterCanvas.toDataURL('image/png');
+                        const downloadLink = document.createElement('a');
+                        downloadLink.download = `LD-Photobooth-Blue-${Date.now()}.png`;
+                        downloadLink.href = finalImage;
+                        downloadLink.click();
+                    }
+                };
+            });
+        }
+    </script>
+</body>
+  </html>
